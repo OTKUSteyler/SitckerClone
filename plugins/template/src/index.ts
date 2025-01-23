@@ -1,96 +1,98 @@
-/**
- * @name CloneStickers
- * @version 1.0.0
- * @description Clones stickers from one server to another.
- * @author btmc727
- * @source https://github.com/OTKUSteyler/StickerClone
- */
+import { registerCommand } from "@vendetta/commands";
+import settings from "./settings";
+import { storage } from "@vendetta/plugin";
 
-import { BdApiModule } from "betterdiscord-types";
+// Default settings
+if (!storage.sourceGuildId) storage.sourceGuildId = "";
+if (!storage.targetGuildId) storage.targetGuildId = "";
 
-declare const BdApi: BdApiModule;
+// Sticker cloning function
+async function cloneSticker(stickerId: string, targetGuildId: string) {
+    try {
+        // Fetch the sticker metadata
+        const sticker = await fetch(`https://discord.com/api/v10/stickers/${stickerId}`, {
+            headers: {
+                Authorization: `Bearer ${window.DiscordNative.user.token}`, // Use user's token
+            },
+        }).then((res) => res.json());
 
-interface Sticker {
-    id: string;
-    name: string;
-    description: string | null;
-    tags: string[];
-    url: string;
-}
-
-export default class CloneStickers {
-    start(): void {
-        BdApi.showToast("CloneStickers Plugin Enabled!");
-    }
-
-    stop(): void {
-        BdApi.showToast("CloneStickers Plugin Disabled!");
-    }
-
-    async cloneStickers(sourceGuildId: string, targetGuildId: string): Promise<void> {
-        try {
-            const guildModule = BdApi.findModuleByProps("getGuild");
-            const stickersModule = BdApi.findModuleByProps("getStickers", "uploadSticker");
-
-            const sourceGuild = guildModule.getGuild(sourceGuildId);
-            const targetGuild = guildModule.getGuild(targetGuildId);
-
-            if (!sourceGuild || !targetGuild) {
-                BdApi.showToast("Invalid server IDs provided.", { type: "error" });
-                return;
-            }
-
-            const stickers: Sticker[] = stickersModule.getStickers(sourceGuildId);
-
-            if (!stickers || stickers.length === 0) {
-                BdApi.showToast("No stickers found in the source server.", { type: "error" });
-                return;
-            }
-
-            for (const sticker of stickers) {
-                const blob = await fetch(sticker.url).then((res) => res.blob());
-
-                await stickersModule.uploadSticker(targetGuildId, {
-                    name: sticker.name,
-                    description: sticker.description,
-                    tags: sticker.tags,
-                    file: blob,
-                });
-
-                BdApi.showToast(`Cloned sticker: ${sticker.name}`, { type: "success" });
-            }
-
-            BdApi.showToast(`Successfully cloned ${stickers.length} stickers to ${targetGuild.name}.`);
-        } catch (error) {
-            console.error("Error cloning stickers:", error);
-            BdApi.showToast("An error occurred while cloning stickers.", { type: "error" });
+        if (!sticker || !sticker.id) {
+            return console.error("Sticker not found or invalid.");
         }
-    }
 
-    getSettingsPanel(): HTMLElement {
-        const panel = document.createElement("div");
+        // Download sticker file
+        const stickerFile = await fetch(sticker.asset).then((res) => res.blob());
 
-        panel.innerHTML = `
-            <h3>Clone Stickers Settings</h3>
-            <label>Source Server ID:</label><br>
-            <input type="text" id="sourceGuildId" placeholder="Enter Source Server ID"><br><br>
-            <label>Target Server ID:</label><br>
-            <input type="text" id="targetGuildId" placeholder="Enter Target Server ID"><br><br>
-            <button id="cloneButton">Clone Stickers</button>
-        `;
+        // Create form data for the upload
+        const formData = new FormData();
+        formData.append("name", sticker.name);
+        formData.append("description", sticker.description || "Cloned sticker");
+        formData.append("tags", sticker.tags);
+        formData.append("file", stickerFile, `${sticker.name}.png`);
 
-        panel.querySelector<HTMLButtonElement>("#cloneButton")!.onclick = () => {
-            const sourceGuildId = (panel.querySelector<HTMLInputElement>("#sourceGuildId")!.value || "").trim();
-            const targetGuildId = (panel.querySelector<HTMLInputElement>("#targetGuildId")!.value || "").trim();
+        // Upload sticker to the target guild
+        await fetch(`https://discord.com/api/v10/guilds/${targetGuildId}/stickers`, {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${window.DiscordNative.user.token}`,
+            },
+            body: formData,
+        });
 
-            if (!sourceGuildId || !targetGuildId) {
-                BdApi.showToast("Please enter both Source and Target Server IDs.", { type: "error" });
-                return;
-            }
-
-            this.cloneStickers(sourceGuildId, targetGuildId);
-        };
-
-        return panel;
+        console.log(`Sticker '${sticker.name}' successfully cloned.`);
+    } catch (error) {
+        console.error("Error cloning sticker:", error);
     }
 }
+
+// Register a command to clone stickers
+const unregister = registerCommand({
+    name: "cloneSticker",
+    displayName: "cloneSticker",
+    description: "Clone a selected sticker to another server",
+    options: [
+        {
+            name: "stickerId",
+            description: "ID of the sticker to clone",
+            required: true,
+            type: 3, // STRING
+        },
+        {
+            name: "targetGuildId",
+            description: "ID of the target server",
+            required: true,
+            type: 3, // STRING
+        },
+    ],
+    execute: async (args, ctx) => {
+        const stickerId = args[0].value;
+        const targetGuildId = args[1].value;
+
+        if (!stickerId || !targetGuildId) {
+            return {
+                content: "Usage: /cloneSticker <stickerId> <targetGuildId>",
+            };
+        }
+
+        await cloneSticker(stickerId, targetGuildId);
+
+        return {
+            content: "Sticker cloning initiated. Check logs for progress.",
+        };
+    },
+});
+
+// Export settings panel for configuration
+export const settingsPanel = () =>
+    settings({
+        sourceGuildId: storage.sourceGuildId,
+        targetGuildId: storage.targetGuildId,
+        saveSettings: (newSettings: { sourceGuildId: string; targetGuildId: string }) => {
+            storage.sourceGuildId = newSettings.sourceGuildId;
+            storage.targetGuildId = newSettings.targetGuildId;
+        },
+    });
+
+export const onUnload = () => {
+    unregister();
+};
