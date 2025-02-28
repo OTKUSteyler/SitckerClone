@@ -1,5 +1,5 @@
 import { registerCommand } from "@vendetta/commands";
-import settings from "./settings";
+import settings from "./Settings";
 import { storage } from "@vendetta/plugin";
 // Default settings
 storage.sourceGuildId ||= ""; // Set default if undefined
